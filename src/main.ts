@@ -1,4 +1,5 @@
-import { MathfieldElement, convertLatexToMarkup } from 'mathlive';
+// 动态导入优化：按需加载 MathLive 减少初始包大小
+import type { MathfieldElement } from 'mathlive';
 import '../node_modules/mathlive/mathlive-static.css';
 import sampleTemplateLibrary from '../template-library.sample.json';
 import './styles.css';
@@ -8,6 +9,18 @@ import { AutoCompleter } from './autocomplete';
 import { performanceMonitor, batchRenderer } from './performance';
 import { getTauriAPI, isTauri } from './tauriApi';
 import { stringCache, memoryMonitor, createElementPool, BatchOptimizer } from './memoryOptimizer';
+
+// 延迟加载 MathLive 的实际实现
+let MathLiveModule: typeof import('mathlive') | null = null;
+let convertLatexToMarkup: typeof import('mathlive').convertLatexToMarkup | null = null;
+
+const loadMathLive = async () => {
+  if (!MathLiveModule) {
+    MathLiveModule = await import('mathlive');
+    convertLatexToMarkup = MathLiveModule.convertLatexToMarkup;
+  }
+  return MathLiveModule;
+};
 
 type Theme = 'light' | 'dark' | 'blue' | 'pink' | 'green' | 'purple' | 'paper' | 'sunset';
 type Mode = 'wysiwyg' | 'latex';
@@ -97,6 +110,11 @@ const TEMPLATE_AUTOSAVE_INTERVAL_MS = 60_000;
 const TEMPLATE_POPOVER_WIDTH = 440;
 const THEME_STORAGE_KEY = 'mathlive.themePreference';
 const VIRTUAL_LIST_THRESHOLD = 50; // 启用虚拟列表的公式数量阈值
+
+// DOM 对象池：复用频繁创建的 DOM 节点
+const formulaCardPool = createElementPool<HTMLElement>('article', 20, 100);
+const templateItemPool = createElementPool<HTMLElement>('div', 10, 50);
+
 let autosaveIntervalId: number | null = null;
 let autosaveDebounceId: number | null = null;
 let templateAutosaveIntervalId: number | null = null;
@@ -513,47 +531,24 @@ if (statusBar) {
   statusBar.hidden = !(isElectronShell || isTauriEnv);
 }
 
-const renderMarkup = (latex: string, options?: Record<string, unknown>) =>
-  convertLatexToMarkup(latex, options as never);
+// Convert LaTeX to rendered HTML with MathLive fallback
+const renderMarkup = (latex: string, options?: Record<string, unknown>) => {
+  if (!convertLatexToMarkup) {
+    // 如果 MathLive 还未加载，返回纯文本
+    return `<span style="font-family: monospace;">${latex}</span>`;
+  }
+  return convertLatexToMarkup(latex, options as never);
+};
 
-const mathfield = new MathfieldElement();
-mathfield.smartFence = true;
-mathfield.mathVirtualKeyboardPolicy = 'manual';
-if (quickToolbar) {
-  [...quickToolbar.querySelectorAll<HTMLButtonElement>('[data-insert]')].forEach((btn) => {
-    btn.innerHTML = renderMarkup(btn.dataset.insert || '', { serialize: false });
-  });
-
-  quickToolbar.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement | null)?.closest('button');
-    if (btn && btn.dataset.insert) {
-      mathfield.executeCommand(['insert', btn.dataset.insert]);
-      mathfield.focus();
-    }
-  });
-
-  // Re-render toolbar icons properly using MathLive
-  requestAnimationFrame(() => {
-    const icons = quickToolbar.querySelectorAll<HTMLSpanElement>('.latex-icon');
-    icons.forEach((icon) => {
-      try {
-        icon.innerHTML = renderMarkup(icon.textContent || '', { serialize: false });
-      } catch (e) {
-        // ignore
-      }
-    });
-  });
-
-  quickToolbar.querySelectorAll<HTMLDetailsElement>('.toolbar-group').forEach((group) => {
-    group.addEventListener('mouseenter', () => {
-      group.open = true;
-    });
-    group.addEventListener('mouseleave', () => {
-      group.open = false;
-    });
-  });
-}
-mathfieldHost.appendChild(mathfield);
+// 创建 MathField（延迟加载）
+let mathfield: MathfieldElement;
+const createMathField = async () => {
+  const MathLive = await loadMathLive();
+  mathfield = new MathLive.MathfieldElement();
+  mathfield.smartFence = true;
+  mathfield.mathVirtualKeyboardPolicy = 'manual';
+  return mathfield;
+};
 
 // Configure virtual keyboard layout via global property if needed
 // window.mathVirtualKeyboard.alphabeticLayout = 'qwerty'; // Example if needed
@@ -675,7 +670,7 @@ const renderFormulaList = () => {
   }
 };
 
-// 标准渲染模式（非虚拟列表）
+// 标准渲染模式（非虚拟列表）- 使用对象池优化
 const renderFormulaListStandard = (filteredFormulas: FormulaItem[]) => {
   // Remove the "no match" hint if it exists and we have results
   if (formulaList.querySelector('.hint')) {
@@ -696,8 +691,8 @@ const renderFormulaListStandard = (filteredFormulas: FormulaItem[]) => {
     let card = existingCards.get(item.id);
 
     if (!card) {
-      // Create new card
-      card = document.createElement('article');
+      // 从对象池获取卡片元素
+      card = formulaCardPool.acquire();
       card.className = 'formula-card';
       card.dataset.id = item.id;
     }
@@ -707,8 +702,11 @@ const renderFormulaListStandard = (filteredFormulas: FormulaItem[]) => {
     existingCards.delete(item.id); // Mark as used
   });
 
-  // Remove unused cards
-  existingCards.forEach((card) => card.remove());
+  // 将未使用的卡片归还到对象池
+  existingCards.forEach((card) => {
+    card.remove();
+    formulaCardPool.release(card);
+  });
 
   // Append sorted/filtered cards
   formulaList.appendChild(fragment);
@@ -2577,6 +2575,55 @@ const updateMemoryStats = () => {
 // 每5秒更新一次内存统计
 setInterval(updateMemoryStats, 5000);
 updateMemoryStats();
+
+// 异步加载 MathLive 并初始化
+(async () => {
+  try {
+    await createMathField();
+    mathfieldHost.appendChild(mathfield);
+    
+    // 初始化快速工具栏图标
+    if (quickToolbar) {
+      [...quickToolbar.querySelectorAll<HTMLButtonElement>('[data-insert]')].forEach((btn) => {
+        btn.innerHTML = renderMarkup(btn.dataset.insert || '', { serialize: false });
+      });
+
+      quickToolbar.addEventListener('click', (e) => {
+        const btn = (e.target as HTMLElement | null)?.closest('button');
+        if (btn && btn.dataset.insert) {
+          mathfield.executeCommand(['insert', btn.dataset.insert]);
+          mathfield.focus();
+        }
+      });
+
+      // Re-render toolbar icons properly using MathLive
+      requestAnimationFrame(() => {
+        const icons = quickToolbar.querySelectorAll<HTMLSpanElement>('.latex-icon');
+        icons.forEach((icon) => {
+          try {
+            icon.innerHTML = renderMarkup(icon.textContent || '', { serialize: false });
+          } catch (e) {
+            // ignore
+          }
+        });
+      });
+
+      quickToolbar.querySelectorAll<HTMLDetailsElement>('.toolbar-group').forEach((group) => {
+        group.addEventListener('mouseenter', () => {
+          group.open = true;
+        });
+        group.addEventListener('mouseleave', () => {
+          group.open = false;
+        });
+      });
+    }
+    
+    console.log('[MathLive] 已成功加载');
+  } catch (error) {
+    console.error('[MathLive] 加载失败:', error);
+    showToast('MathLive 加载失败，请刷新页面重试', 'error');
+  }
+})();
 
 // Notify parent (Flutter) that we are ready to receive messages
 if (window.parent && window.parent !== window) {

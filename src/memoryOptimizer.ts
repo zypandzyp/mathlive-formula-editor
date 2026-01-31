@@ -27,7 +27,9 @@ class StringCache {
     if (this.cache.size >= this.maxSize) {
       // 使用 FIFO 策略，删除第一个元素
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
 
     this.cache.set(str, str);

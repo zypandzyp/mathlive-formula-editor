@@ -1168,6 +1168,7 @@ body.theme-dark .search-row input {
   border: 1px solid rgba(21, 94, 239, 0.2);
   border-radius: 6px;
   transition: all 0.2s;
+  -webkit-user-select: none;
   user-select: none;
 }
 
