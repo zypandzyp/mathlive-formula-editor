@@ -1,7 +1,5 @@
 // 动态导入优化：按需加载 MathLive 减少初始包大小
 import type { MathfieldElement } from 'mathlive';
-import '../node_modules/mathlive/mathlive-static.css';
-import sampleTemplateLibrary from '../template-library.sample.json';
 import './styles.css';
 import { createVirtualList, type VirtualListOptions } from './virtualList';
 import { themeManager } from './theme';
@@ -13,14 +11,37 @@ import { stringCache, createElementPool } from './memoryOptimizer';
 // 延迟加载 MathLive 的实际实现
 let MathLiveModule: typeof import('mathlive') | null = null;
 let convertLatexToMarkup: typeof import('mathlive').convertLatexToMarkup | null = null;
+let mathLiveCssLoaded = false;
+
+const preloadKaTeXMainFont = () => {
+  if (typeof document === 'undefined') return;
+  if (document.querySelector('link[data-katex-preload="main"]')) return;
+  const link = document.createElement('link');
+  link.rel = 'preload';
+  link.as = 'font';
+  link.type = 'font/woff2';
+  link.crossOrigin = 'anonymous';
+  link.href = new URL('../node_modules/mathlive/fonts/KaTeX_Main-Regular.woff2', import.meta.url).href;
+  link.dataset.katexPreload = 'main';
+  document.head.appendChild(link);
+};
+
+const loadMathLiveCss = async () => {
+  if (mathLiveCssLoaded) return;
+  await import('../node_modules/mathlive/mathlive-static.css');
+  mathLiveCssLoaded = true;
+};
 
 const loadMathLive = async () => {
+  await loadMathLiveCss();
   if (!MathLiveModule) {
     MathLiveModule = await import('mathlive');
     convertLatexToMarkup = MathLiveModule.convertLatexToMarkup;
   }
   return MathLiveModule;
 };
+
+preloadKaTeXMainFont();
 
 type Theme = 'light' | 'dark' | 'blue' | 'pink' | 'green' | 'purple' | 'paper' | 'sunset';
 type Mode = 'wysiwyg' | 'latex';
@@ -441,6 +462,21 @@ let isTemplatePanelOpen = false;
 const templateTreeExpandedIds = new Set<string>();
 let hasInitializedTemplateTree = false;
 let suppressTemplateAutoExpandOnce = false;
+let templateLibraryLoaded = false;
+
+const ensureTemplateLibraryLoaded = () => {
+  if (templateLibraryLoaded) return;
+  loadTemplateLibraryFromLocalStorage();
+  loadTemplateTreeExpandedState();
+  renderTemplateCategoryOptions();
+  renderTemplateList();
+  if (state.templateLibrary.categories.length) {
+    setTemplateStatusText('已加载浏览器缓存模板（未绑定文件）', { variant: 'warning' });
+  } else {
+    setTemplateStatusText('未加载模板库');
+  }
+  templateLibraryLoaded = true;
+};
 
 const applyTemplatePanelState = (open: boolean) => {
   isTemplatePanelOpen = open;
@@ -448,6 +484,7 @@ const applyTemplatePanelState = (open: boolean) => {
   templatePopover.hidden = !open;
   toggleTemplatePanelButton.textContent = open ? '关闭模板库' : '打开模板库';
   if (open) {
+    ensureTemplateLibraryLoaded();
     const savedWidth = window.localStorage?.getItem(TEMPLATE_PANEL_WIDTH_KEY);
     if (savedWidth) {
       layout.style.setProperty('--template-width', savedWidth);
@@ -1496,6 +1533,7 @@ const focusTemplatePanel = () => {
 };
 
 const toggleTemplatePopover = () => {
+  ensureTemplateLibraryLoaded();
   focusTemplatePanel();
 };
 
@@ -2001,6 +2039,7 @@ const importTemplateText = async (content: string, { silent = false }: { silent?
     } else {
       setTemplateStatusText('模板文件为空', { variant: 'warning' });
     }
+    templateLibraryLoaded = true;
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
@@ -2030,6 +2069,7 @@ const importTemplateData = async (file: File, { silent = false }: { silent?: boo
 
 const loadSampleTemplateLibrary = async () => {
   try {
+    const { default: sampleTemplateLibrary } = await import('../template-library.sample.json');
     const categories = normalizeTemplateCategories(sampleTemplateLibrary?.categories ?? []);
     if (!categories.length) {
       alert('示例模板文件为空或格式不正确');
@@ -2040,6 +2080,7 @@ const loadSampleTemplateLibrary = async () => {
     resetTemplateSearchTerm();
     renderTemplateCategoryOptions();
     renderTemplateList();
+    templateLibraryLoaded = true;
     await persistTemplateLibrary({ skipBoundWrite: true });
     unbindTemplateFile('已加载示例模板（未绑定文件）', 'warning');
   } catch (error) {
@@ -2168,8 +2209,12 @@ const exportTemplateLibrary = async () => {
 };
 
 // Event bindings -----------------------------------------------------------
-createTemplateCategoryButton.addEventListener('click', handleCreateTemplateCategory);
+createTemplateCategoryButton.addEventListener('click', () => {
+  ensureTemplateLibraryLoaded();
+  handleCreateTemplateCategory();
+});
 deleteCurrentCategoryButton.addEventListener('click', () => {
+  ensureTemplateLibraryLoaded();
   if (!state.templateLibrary.selectedCategoryId) {
     alert('当前没有可删除的分类');
     return;
@@ -2177,10 +2222,12 @@ deleteCurrentCategoryButton.addEventListener('click', () => {
   removeTemplateCategory(state.templateLibrary.selectedCategoryId);
 });
 templateSearchInput.addEventListener('input', (event) => {
+  ensureTemplateLibraryLoaded();
   state.templateSearchTerm = (event.target as HTMLInputElement).value;
   renderTemplateList();
 });
 templateTreeContainer.addEventListener('click', (event) => {
+  ensureTemplateLibraryLoaded();
   const toggleTarget = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('.template-tree__toggle');
   if (toggleTarget?.dataset.templateToggle) {
     const id = toggleTarget.dataset.templateToggle;
@@ -2213,9 +2260,11 @@ templateTreeContainer.addEventListener('click', (event) => {
   renderTemplateList();
 });
 saveTemplateButton.addEventListener('click', () => {
+  ensureTemplateLibraryLoaded();
   saveTemplateEntry();
 });
 templateListContainer.addEventListener('click', (event) => {
+  ensureTemplateLibraryLoaded();
   const insertBtn = (event.target as HTMLElement | null)?.closest('[data-template-insert]') as HTMLElement | null;
   if (insertBtn) {
     const categoryId = insertBtn.dataset.templateCategory;
@@ -2261,9 +2310,18 @@ const menuActionHandlers: Record<string, () => void> = {
   exportLatex,
   exportMarkdown,
   toggleTemplatePopover,
-  bindTemplateFile: chooseTemplateLibraryFile,
-  loadSampleTemplates: loadSampleTemplateLibrary,
-  exportTemplateLibrary,
+  bindTemplateFile: () => {
+    ensureTemplateLibraryLoaded();
+    chooseTemplateLibraryFile();
+  },
+  loadSampleTemplates: () => {
+    ensureTemplateLibraryLoaded();
+    loadSampleTemplateLibrary();
+  },
+  exportTemplateLibrary: () => {
+    ensureTemplateLibraryLoaded();
+    exportTemplateLibrary();
+  },
   setThemeLight: () => setTheme('light'),
   setThemeDark: () => setTheme('dark'),
   toggleTheme: () => {
@@ -2380,11 +2438,17 @@ exportLatexButton.addEventListener('click', exportLatex);
 exportJsonButton.addEventListener('click', exportJson);
 exportMarkdownButton.addEventListener('click', exportMarkdown);
 copyJsonButton.addEventListener('click', copyJsonToClipboard);
-exportTemplateJsonButton.addEventListener('click', exportTemplateLibrary);
+exportTemplateJsonButton.addEventListener('click', () => {
+  ensureTemplateLibraryLoaded();
+  exportTemplateLibrary();
+});
 
 newFormulaSetButton.addEventListener('click', startNewFormulaSet);
 loadJsonButton.addEventListener('click', handleLoadJsonRequest);
-bindTemplateButton.addEventListener('click', chooseTemplateLibraryFile);
+bindTemplateButton.addEventListener('click', () => {
+  ensureTemplateLibraryLoaded();
+  chooseTemplateLibraryFile();
+});
 
 clearAllButton.addEventListener('click', clearAll);
 latexInput.addEventListener('input', debouncedLatexPreview);
@@ -2480,16 +2544,7 @@ document.addEventListener('keydown', (event) => {
 });
 
 registerElectronMenuBridge();
-
-loadTemplateLibraryFromLocalStorage();
-loadTemplateTreeExpandedState();
-renderTemplateCategoryOptions();
-renderTemplateList();
-if (state.templateLibrary.categories.length) {
-  setTemplateStatusText('已加载浏览器缓存模板（未绑定文件）', { variant: 'warning' });
-} else {
-  setTemplateStatusText('未加载模板库');
-}
+setTemplateStatusText('模板库未加载');
 
 updateLatexPreview();
 updateNotePreview();
