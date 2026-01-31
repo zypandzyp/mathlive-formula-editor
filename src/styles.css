@@ -1,3 +1,16 @@
+/* Font rendering tweaks to reduce layout shift */
+@font-face {
+  font-family: KaTeX_Main;
+  font-style: normal;
+  font-weight: 400;
+  src: url("../node_modules/mathlive/fonts/KaTeX_Main-Regular.woff2") format("woff2");
+  font-display: swap;
+  ascent-override: 90%;
+  descent-override: 10%;
+  line-gap-override: 0%;
+  size-adjust: 100%;
+}
+
 /* Global palette + typography tokens */
 :root {
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
