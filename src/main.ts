@@ -7,6 +7,7 @@ import { themeManager } from './theme';
 import { AutoCompleter } from './autocomplete';
 import { performanceMonitor, batchRenderer } from './performance';
 import { getTauriAPI, isTauri } from './tauriApi';
+import { stringCache, memoryMonitor, createElementPool, BatchOptimizer } from './memoryOptimizer';
 
 type Theme = 'light' | 'dark' | 'blue' | 'pink' | 'green' | 'purple' | 'paper' | 'sunset';
 type Mode = 'wysiwyg' | 'latex';
@@ -133,11 +134,14 @@ const showToast = (message: string, type: 'info' | 'success' | 'warning' | 'erro
   toast.textContent = message;
   toastContainer.appendChild(toast);
 
+  const handleAnimationEnd = () => {
+    toast.removeEventListener('animationend', handleAnimationEnd);
+    toast.remove();
+  };
+
   setTimeout(() => {
     toast.classList.add('toast--hiding');
-    toast.addEventListener('animationend', () => {
-      toast.remove();
-    });
+    toast.addEventListener('animationend', handleAnimationEnd, { once: true });
   }, 3000);
 };
 
@@ -301,6 +305,28 @@ layout.innerHTML = `
         <button id="clearAll" class="danger">清空全部</button>
       </div>
     </header>
+    <div class="memory-monitor" id="memoryMonitor">
+      <div class="memory-monitor__toggle" id="memoryToggle">🧠 内存</div>
+      <div class="memory-monitor__panel" id="memoryPanel" hidden>
+        <div class="memory-stat">
+          <span>已用:</span>
+          <strong id="memoryUsed">--</strong>
+        </div>
+        <div class="memory-stat">
+          <span>总计:</span>
+          <strong id="memoryTotal">--</strong>
+        </div>
+        <div class="memory-stat">
+          <span>使用率:</span>
+          <strong id="memoryPercent">--</strong>
+        </div>
+        <div class="memory-stat">
+          <span>字符串缓存:</span>
+          <strong id="stringCacheSize">0</strong>
+        </div>
+        <button id="clearCachesBtn" class="secondary-btn" style="margin-top: 8px;">清理缓存</button>
+      </div>
+    </div>
     <div class="search-row">
       <input type="search" id="formulaSearchInput" placeholder="搜索公式 LaTeX 或说明..." />
     </div>
@@ -1064,13 +1090,18 @@ const addFormula = () => {
   }
 
   const note = noteInput.value.trim();
+  
+  // 使用字符串缓存减少重复存储
+  const cachedLatex = stringCache.intern(latex);
+  const cachedNote = note ? stringCache.intern(note) : '';
+  
   if (state.editingId) {
     state.formulas = state.formulas.map((item) =>
       item.id === state.editingId
         ? {
             ...item,
-            latex,
-            note,
+            latex: cachedLatex,
+            note: cachedNote,
           }
         : item,
     );
@@ -1083,8 +1114,8 @@ const addFormula = () => {
   state.formulas.push({
     id: generateId('formula'),
     index: state.nextIndex,
-    latex,
-    note,
+    latex: cachedLatex,
+    note: cachedNote,
   });
 
   state.nextIndex += 1;
@@ -1113,6 +1144,10 @@ const clearAll = () => {
     exitEditMode({ skipRender: true });
     renderFormulaList();
     scheduleAutosave();
+    
+    // 清理内存缓存
+    stringCache.clear();
+    descendantCategoryIdsCache.clear();
   }
 };
 
@@ -1538,10 +1573,29 @@ const startTemplateAutosave = () => {
 const getTemplateChildren = (parentId?: string) =>
   state.templateLibrary.categories.filter((cat) => (cat.parentId || '') === (parentId || ''));
 
-const getAllTemplates = () =>
-  state.templateLibrary.categories.flatMap((category) =>
-    category.templates.map((template) => ({ template, category })),
-  );
+// 优化：减少数组创建，使用缓存
+const getAllTemplates = (() => {
+  let cache: Array<{template: TemplateItem, category: TemplateCategory}> | null = null;
+  let lastCategoriesLength = 0;
+  
+  return () => {
+    // 简单的缓存失效策略：检查分类数量是否变化
+    if (cache && lastCategoriesLength === state.templateLibrary.categories.length) {
+      return cache;
+    }
+    
+    const result: Array<{template: TemplateItem, category: TemplateCategory}> = [];
+    for (const category of state.templateLibrary.categories) {
+      for (const template of category.templates) {
+        result.push({ template, category });
+      }
+    }
+    
+    cache = result;
+    lastCategoriesLength = state.templateLibrary.categories.length;
+    return result;
+  };
+})();
 
 const getTemplateCategoryDepth = (categoryId?: string) => {
   if (!categoryId) return 0;
@@ -1555,12 +1609,25 @@ const getTemplateCategoryDepth = (categoryId?: string) => {
   return depth;
 };
 
+// 优化：使用 Map 缓存后代 ID，避免重复计算
+const descendantCategoryIdsCache = new Map<string, string[]>();
+
+const clearDescendantCache = () => descendantCategoryIdsCache.clear();
+
 const getDescendantCategoryIds = (categoryId: string): string[] => {
+  if (descendantCategoryIdsCache.has(categoryId)) {
+    return descendantCategoryIdsCache.get(categoryId)!;
+  }
+  
+  const result: string[] = [categoryId];
   const children = getTemplateChildren(categoryId);
-  return children.reduce(
-    (acc, child) => acc.concat(child.id, getDescendantCategoryIds(child.id)),
-    [categoryId],
-  );
+  
+  for (const child of children) {
+    result.push(...getDescendantCategoryIds(child.id));
+  }
+  
+  descendantCategoryIdsCache.set(categoryId, result);
+  return result;
 };
 
 const getCategoryTemplateCount = (categoryId: string) => {
@@ -1902,6 +1969,10 @@ const removeTemplateEntry = async (categoryId: string, templateId: string) => {
     return;
   }
   category.templates = category.templates.filter((tpl) => tpl.id !== templateId);
+  
+  // 清理缓存
+  descendantCategoryIdsCache.clear();
+  
   renderTemplateCategoryOptions();
   renderTemplateList();
   await persistTemplateLibrary();
@@ -1922,6 +1993,10 @@ const removeTemplateCategory = async (categoryId: string) => {
   if (idsToRemove.has(state.templateLibrary.selectedCategoryId)) {
     state.templateLibrary.selectedCategoryId = ALL_CATEGORY_ID;
   }
+  
+  // 清理缓存
+  descendantCategoryIdsCache.clear();
+  
   renderTemplateCategoryOptions();
   renderTemplateList();
   await persistTemplateLibrary();
@@ -2456,6 +2531,52 @@ if (typeof window !== 'undefined') {
   document.body.appendChild(performanceMonitor.createOverlay());
   console.log('[Performance Monitor] Enabled');
 }
+
+// 初始化内存监控
+const memoryToggle = layout.querySelector<HTMLDivElement>('#memoryToggle');
+const memoryPanel = layout.querySelector<HTMLDivElement>('#memoryPanel');
+const memoryUsedEl = layout.querySelector<HTMLElement>('#memoryUsed');
+const memoryTotalEl = layout.querySelector<HTMLElement>('#memoryTotal');
+const memoryPercentEl = layout.querySelector<HTMLElement>('#memoryPercent');
+const stringCacheSizeEl = layout.querySelector<HTMLElement>('#stringCacheSize');
+const clearCachesBtn = layout.querySelector<HTMLButtonElement>('#clearCachesBtn');
+
+if (memoryToggle && memoryPanel) {
+  memoryToggle.addEventListener('click', () => {
+    const isHidden = memoryPanel.hasAttribute('hidden');
+    if (isHidden) {
+      memoryPanel.removeAttribute('hidden');
+      updateMemoryStats();
+    } else {
+      memoryPanel.setAttribute('hidden', '');
+    }
+  });
+}
+
+if (clearCachesBtn) {
+  clearCachesBtn.addEventListener('click', () => {
+    stringCache.clear();
+    descendantCategoryIdsCache.clear();
+    showToast('缓存已清理', 'success');
+    updateMemoryStats();
+  });
+}
+
+const updateMemoryStats = () => {
+  const usage = memoryMonitor.getCurrentMemoryUsage();
+  if (usage && memoryUsedEl && memoryTotalEl && memoryPercentEl) {
+    memoryUsedEl.textContent = `${usage.used} MB`;
+    memoryTotalEl.textContent = `${usage.total} MB`;
+    memoryPercentEl.textContent = `${usage.percentage}%`;
+  }
+  if (stringCacheSizeEl) {
+    stringCacheSizeEl.textContent = String(stringCache.size);
+  }
+};
+
+// 每5秒更新一次内存统计
+setInterval(updateMemoryStats, 5000);
+updateMemoryStats();
 
 // Notify parent (Flutter) that we are ready to receive messages
 if (window.parent && window.parent !== window) {

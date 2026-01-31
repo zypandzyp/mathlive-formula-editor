@@ -85,10 +85,11 @@ export class VirtualList<T = unknown> {
     const totalHeight = this.items.length * this.itemHeight;
     this.content.style.height = `${totalHeight}px`;
 
-    // 移除不在可视范围内的元素
-    const visibleIds = new Set(
-      this.items.slice(this.visibleStart, this.visibleEnd).map((item) => item.id)
-    );
+    // 移除不在可视范围内的元素（优化：直接遍历而不创建临时数组）
+    const visibleIds = new Set<string>();
+    for (let i = this.visibleStart; i < this.visibleEnd; i++) {
+      if (this.items[i]) visibleIds.add(this.items[i].id);
+    }
     
     for (const [id, element] of this.renderedElements.entries()) {
       if (!visibleIds.has(id)) {
@@ -142,8 +143,13 @@ export class VirtualList<T = unknown> {
     if (this.scrollRAF) {
       cancelAnimationFrame(this.scrollRAF);
     }
-    this.viewport.remove();
+    this.viewport.removeEventListener('scroll', this.handleScroll.bind(this));
+    // 清理所有渲染的元素引用
+    this.renderedElements.forEach(element => element.remove());
     this.renderedElements.clear();
+    this.viewport.remove();
+    // 清空引用帮助GC
+    this.items = [];
   }
 
   public refresh(): void {
