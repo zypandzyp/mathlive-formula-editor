@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig(({ mode }) => ({
-  base: mode === 'development' ? '/' : './',
+  base: mode === 'development' ? '/' : '/mathlive-formula-editor/',
 }));
