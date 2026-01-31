@@ -1,0 +1,50 @@
+{
+  "name": "mathlive-formula-editor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview",
+    "prepare-icon": "node scripts/ensure-icon.cjs",
+    "desktop": "npm run prepare-icon && npm run build && electron .",
+    "package": "npm run prepare-icon && npm run build && electron-builder",
+    "tauri": "tauri",
+    "tauri:dev": "cmd /c \"set PATH=%USERPROFILE%\\.cargo\\bin;%PATH% & tauri dev\"",
+    "tauri:build": "cmd /c \"set PATH=%USERPROFILE%\\.cargo\\bin;%PATH% & tauri build\"",
+    "tauri:build:debug": "cmd /c \"set PATH=%USERPROFILE%\\.cargo\\bin;%PATH% & tauri build --debug\""
+  },
+  "dependencies": {
+    "mathlive": "^0.108.2",
+    "serve-handler": "^6.1.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^1.6.0",
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.2.0",
+    "typescript": "^5.4.0"
+  },
+  "build": {
+    "appId": "com.mathlive.formulaeditor",
+    "productName": "MathLiveFormulaEditor",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "icon": "electron/icon.ico",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "categories": [
+    {
+      "id": "sample-integral",
+      "name": "积分",
+      "templates": [
+        {
+          "id": "sample-FTC",
+          "name": "牛顿-莱布尼茨公式",
+          "latex": "\\int_a^b f'(x)\\,\\, dx = f(b) - f(a)",
+          "note": "\\text{适用于连续可导函数}"
+        }
+      ]
+    },
+    {
+      "id": "sample-linear",
+      "name": "线性代数",
+      "templates": [
+        {
+          "id": "sample-determinant",
+          "name": "三阶行列式展开",
+          "latex": "\\det(A) = a_{11}M_{11} - a_{12}M_{12} + a_{13}M_{13}",
+          "note": "\\text{按第一行展开}"
+        },
+        {
+          "id": "sample-eigen",
+          "name": "特征值定义",
+          "latex": "A\\mathbf{v} = \\lambda \\mathbf{v}",
+          "note": "\\text{\\mathbf{v} 为特征向量}"
+        }
+      ]
+    }
+  ]
+}
