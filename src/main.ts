@@ -8,7 +8,7 @@ import { themeManager } from './theme';
 import { AutoCompleter } from './autocomplete';
 import { performanceMonitor, batchRenderer } from './performance';
 import { getTauriAPI, isTauri } from './tauriApi';
-import { stringCache, memoryMonitor, createElementPool, BatchOptimizer } from './memoryOptimizer';
+import { stringCache, createElementPool } from './memoryOptimizer';
 
 // 延迟加载 MathLive 的实际实现
 let MathLiveModule: typeof import('mathlive') | null = null;
@@ -323,28 +323,6 @@ layout.innerHTML = `
         <button id="clearAll" class="danger">清空全部</button>
       </div>
     </header>
-    <div class="memory-monitor" id="memoryMonitor">
-      <div class="memory-monitor__toggle" id="memoryToggle">🧠 内存</div>
-      <div class="memory-monitor__panel" id="memoryPanel" hidden>
-        <div class="memory-stat">
-          <span>已用:</span>
-          <strong id="memoryUsed">--</strong>
-        </div>
-        <div class="memory-stat">
-          <span>总计:</span>
-          <strong id="memoryTotal">--</strong>
-        </div>
-        <div class="memory-stat">
-          <span>使用率:</span>
-          <strong id="memoryPercent">--</strong>
-        </div>
-        <div class="memory-stat">
-          <span>字符串缓存:</span>
-          <strong id="stringCacheSize">0</strong>
-        </div>
-        <button id="clearCachesBtn" class="secondary-btn" style="margin-top: 8px;">清理缓存</button>
-      </div>
-    </div>
     <div class="search-row">
       <input type="search" id="formulaSearchInput" placeholder="搜索公式 LaTeX 或说明..." />
     </div>
@@ -541,7 +519,7 @@ const renderMarkup = (latex: string, options?: Record<string, unknown>) => {
 };
 
 // 创建 MathField（延迟加载）
-let mathfield: MathfieldElement;
+let mathfield: MathfieldElement | null = null;
 const createMathField = async () => {
   const MathLive = await loadMathLive();
   mathfield = new MathLive.MathfieldElement();
@@ -582,12 +560,12 @@ const getCurrentLatex = () => {
   if (state.mode === 'latex') {
     return latexInput.value.trim();
   }
-  return mathfield.getValue('latex-expanded');
+  return mathfield?.getValue('latex-expanded') || '';
 };
 
 // Reset both MathLive + textarea inputs back to the default blank state
 const resetCurrentInput = () => {
-  mathfield.setValue('');
+  mathfield?.setValue('');
   latexInput.value = '';
   noteInput.value = '';
   updateLatexPreview();
@@ -1056,14 +1034,14 @@ const updateActionButtons = () => {
 // Hydrate inputs with the selected formula so users can tweak existing entries
 const enterEditMode = (formula: FormulaItem) => {
   state.editingId = formula.id;
-  mathfield.setValue(formula.latex);
+  mathfield?.setValue(formula.latex);
   latexInput.value = formula.latex;
   noteInput.value = formula.note ?? '';
   updateLatexPreview();
   updateNotePreview();
   updateActionButtons();
   renderFormulaList();
-  mathfield.focus();
+  mathfield?.focus();
 };
 
 // Leave edit mode and optionally keep current field values (useful after save)
@@ -1166,7 +1144,7 @@ const startNewFormulaSet = () => {
 const switchMode = (mode: Mode) => {
   state.mode = mode;
   inputStack.dataset.mode = mode;
-  const wysiwygWrapper = mathfield.closest('.wysiwyg-wrapper') as HTMLElement | null;
+  const wysiwygWrapper = mathfield?.closest('.wysiwyg-wrapper') as HTMLElement | null;
   if (wysiwygWrapper) {
     wysiwygWrapper.hidden = mode !== 'wysiwyg';
   }
@@ -1176,10 +1154,10 @@ const switchMode = (mode: Mode) => {
   });
 
   if (mode === 'latex') {
-    latexInput.value = mathfield.getValue('latex-expanded');
+    latexInput.value = mathfield?.getValue('latex-expanded') ?? latexInput.value;
     updateLatexPreview();
   } else {
-    mathfield.setValue(latexInput.value);
+    mathfield?.setValue(latexInput.value);
   }
 };
 
@@ -1949,13 +1927,13 @@ const saveTemplateEntry = async () => {
 };
 
 const applyTemplateToEditor = (template: TemplateItem) => {
-  mathfield.setValue(template.latex);
+  mathfield?.setValue(template.latex);
   latexInput.value = template.latex;
   noteInput.value = template.note || '';
   updateLatexPreview();
   updateNotePreview();
   switchMode(state.mode);
-  mathfield.focus();
+  mathfield?.focus();
 };
 
 const removeTemplateEntry = async (categoryId: string, templateId: string) => {
@@ -2380,9 +2358,9 @@ resetButton.addEventListener('click', () => {
     resetCurrentInput();
   }
 });
-undoStepButton.addEventListener('click', () => mathfield.executeCommand('undo'));
-redoStepButton.addEventListener('click', () => mathfield.executeCommand('redo'));
-clearMathfieldButton.addEventListener('click', () => mathfield.setValue(''));
+undoStepButton.addEventListener('click', () => mathfield?.executeCommand('undo'));
+redoStepButton.addEventListener('click', () => mathfield?.executeCommand('redo'));
+clearMathfieldButton.addEventListener('click', () => mathfield?.setValue(''));
 
 importJsonInput.addEventListener('change', async (event) => {
   const [file] = (event.target as HTMLInputElement).files || [];
@@ -2495,7 +2473,7 @@ document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
     // If focus is in mathfield or latexInput or noteInput, add formula
     const active = document.activeElement as HTMLElement | null;
-    if (active === mathfield || active === latexInput || active === noteInput || active?.closest('math-field')) {
+    if ((mathfield && active === mathfield) || active === latexInput || active === noteInput || active?.closest('math-field')) {
       addFormula();
     }
   }
@@ -2530,57 +2508,11 @@ if (typeof window !== 'undefined') {
   console.log('[Performance Monitor] Enabled');
 }
 
-// 初始化内存监控
-const memoryToggle = layout.querySelector<HTMLDivElement>('#memoryToggle');
-const memoryPanel = layout.querySelector<HTMLDivElement>('#memoryPanel');
-const memoryUsedEl = layout.querySelector<HTMLElement>('#memoryUsed');
-const memoryTotalEl = layout.querySelector<HTMLElement>('#memoryTotal');
-const memoryPercentEl = layout.querySelector<HTMLElement>('#memoryPercent');
-const stringCacheSizeEl = layout.querySelector<HTMLElement>('#stringCacheSize');
-const clearCachesBtn = layout.querySelector<HTMLButtonElement>('#clearCachesBtn');
-
-if (memoryToggle && memoryPanel) {
-  memoryToggle.addEventListener('click', () => {
-    const isHidden = memoryPanel.hasAttribute('hidden');
-    if (isHidden) {
-      memoryPanel.removeAttribute('hidden');
-      updateMemoryStats();
-    } else {
-      memoryPanel.setAttribute('hidden', '');
-    }
-  });
-}
-
-if (clearCachesBtn) {
-  clearCachesBtn.addEventListener('click', () => {
-    stringCache.clear();
-    descendantCategoryIdsCache.clear();
-    showToast('缓存已清理', 'success');
-    updateMemoryStats();
-  });
-}
-
-const updateMemoryStats = () => {
-  const usage = memoryMonitor.getCurrentMemoryUsage();
-  if (usage && memoryUsedEl && memoryTotalEl && memoryPercentEl) {
-    memoryUsedEl.textContent = `${usage.used} MB`;
-    memoryTotalEl.textContent = `${usage.total} MB`;
-    memoryPercentEl.textContent = `${usage.percentage}%`;
-  }
-  if (stringCacheSizeEl) {
-    stringCacheSizeEl.textContent = String(stringCache.size);
-  }
-};
-
-// 每5秒更新一次内存统计
-setInterval(updateMemoryStats, 5000);
-updateMemoryStats();
-
 // 异步加载 MathLive 并初始化
 (async () => {
   try {
-    await createMathField();
-    mathfieldHost.appendChild(mathfield);
+    const created = await createMathField();
+    mathfieldHost.appendChild(created);
     
     // 初始化快速工具栏图标
     if (quickToolbar) {
@@ -2591,8 +2523,8 @@ updateMemoryStats();
       quickToolbar.addEventListener('click', (e) => {
         const btn = (e.target as HTMLElement | null)?.closest('button');
         if (btn && btn.dataset.insert) {
-          mathfield.executeCommand(['insert', btn.dataset.insert]);
-          mathfield.focus();
+          created.executeCommand(['insert', btn.dataset.insert]);
+          created.focus();
         }
       });
 
