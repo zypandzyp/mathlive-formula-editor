@@ -5,9 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>公式编辑器 · MathLive</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' ry='12' fill='%2300519E'/%3E%3Cpath d='M16 45h32M21 19h22l-11 26' stroke='%23fff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E" />
+    <style>
+      :root {
+        font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+        background-color: #f5f7fb;
+        color: #101828;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background-color: #f5f7fb;
+      }
+      #app {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .app-loading {
+        font-size: 1rem;
+        color: #667085;
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="app-loading">正在加载工作区…</div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

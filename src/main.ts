@@ -267,7 +267,18 @@ const loadThemePreference = () => {
 loadThemePreference();
 
 // Build the split-pane layout up front so all handlers can query for elements once
+const topBar = document.createElement('section');
 const layout = document.createElement('div');
+topBar.className = 'top-bar';
+topBar.innerHTML = `
+  <div class="status-bar" aria-live="polite">
+    <span id="lanStatus"></span>
+  </div>
+
+  <input type="file" id="importJsonInput" accept="application/json" hidden />
+  <input type="file" id="importTemplateInput" accept="application/json" hidden />
+`;
+
 layout.className = 'layout';
 layout.innerHTML = `
   <section class="panel panel-input">
@@ -308,7 +319,7 @@ layout.innerHTML = `
 
       <div class="action-row">
         <button id="addFormula" class="primary">➕ 添加到右侧</button>
-        <button id="resetCurrent">↺ 重置当前输入</button>
+        <button id="resetCurrent" class="secondary">↺ 重置当前输入</button>
       </div>
       <p class="edit-hint" id="editHint" hidden>当前处于编辑模式，请保存或取消。</p>
     </div>
@@ -391,19 +402,14 @@ layout.innerHTML = `
   </section>
 `;
 
-const topBar = document.createElement('section');
-topBar.className = 'top-bar';
-topBar.innerHTML = `
-  <div class="status-bar" aria-live="polite">
-    <span id="lanStatus"></span>
-  </div>
-
-  <input type="file" id="importJsonInput" accept="application/json" hidden />
-  <input type="file" id="importTemplateInput" accept="application/json" hidden />
-`;
-
-app.appendChild(topBar);
-app.appendChild(layout);
+// Replace the initial loading placeholder with the real layout in one shot
+if (typeof app.replaceChildren === 'function') {
+  app.replaceChildren(topBar, layout);
+} else {
+  app.innerHTML = '';
+  app.appendChild(topBar);
+  app.appendChild(layout);
+}
 
 // Pre-cache frequently used DOM nodes for performance and readability
 const mathfieldHost = assertElement(layout.querySelector<HTMLDivElement>('.mathfield-host'), '.mathfield-host');
@@ -2043,11 +2049,7 @@ const importTemplateText = async (content: string, { silent = false }: { silent?
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知错误';
-    if (!silent) {
-      alert(`导入模板失败：${message}`);
-    } else {
-      console.error('导入模板失败', error);
-    }
+    alert(`导入模板失败：${message}`);
     return false;
   }
 };
